@@ -294,7 +294,7 @@ See [`SECURITY.md`](SECURITY.md) for the threat model and how to report issues.
 | | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
 | Scheduling | systemd `--user` timers | launchd LaunchAgents | Task Scheduler |
-| Notifications | libnotify / D-Bus | NSUserNotification | WinRT toast |
+| Notifications | libnotify / D-Bus | NSUserNotification | wscript MsgBox |
 
 A graphical login session is required for notifications (the usual desktop case). Headless use still
 schedules and runs automation; `ccplan doctor` tells you what's available.

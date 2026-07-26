@@ -68,7 +68,18 @@ fn platform_notification_check() -> Result<(), NotifyError> {
 #[cfg(target_os = "windows")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn platform_notification_check() -> Result<(), NotifyError> {
-    command_available("powershell.exe", "PowerShell is unavailable")
+    let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    let path = std::path::Path::new(&system_root)
+        .join("System32")
+        .join("wscript.exe");
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(NotifyError::Operation(format!(
+            "wscript.exe is unavailable at {}",
+            path.display()
+        )))
+    }
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
@@ -77,7 +88,7 @@ fn platform_notification_check() -> Result<(), NotifyError> {
     Err(NotifyError::Unavailable)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn command_available(command: &str, message: &str) -> Result<(), NotifyError> {
     std::process::Command::new(command)
@@ -122,23 +133,87 @@ fn send_native_notification(notification: &Notification) -> Result<(), NotifyErr
     command_success("osascript", &output)
 }
 
+/// Windows notifications use `wscript` + `MsgBox` (same idea as a desktop
+/// `.vbs` reminder created with `schtasks /Create /TR ...`).
+///
+/// Scripts are persisted under `%LOCALAPPDATA%\ccplan\data` (or
+/// `$CCPLAN_ROOT\data` when set) so they can be inspected after a fire.
 #[cfg(target_os = "windows")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn send_native_notification(notification: &Notification) -> Result<(), NotifyError> {
-    let xml = format!(
-        "<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
-        super::format::xml_escape(&notification.title),
-        super::format::xml_escape(&notification.body)
-    );
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // vbInformation
+    const MSGBOX_INFORMATION: i32 = 64;
+
+    // MsgBox prompt is the prominent text; Notification.title maps there (not the
+    // window caption). Append the body with `vbCrLf` — VBScript string literals
+    // cannot contain raw newlines (that yields "unterminated string constant").
+    let prompt = if notification.body.is_empty() {
+        super::format::vbscript_string(&notification.title)
+    } else {
+        format!(
+            "{} & vbCrLf & {}",
+            super::format::vbscript_string(&notification.title),
+            super::format::vbscript_string(&notification.body)
+        )
+    };
     let script = format!(
-        r#"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml({}); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("ccplan").Show($toast)"#,
-        super::format::powershell_string(&xml)
+        "MsgBox {prompt}, {style}, {caption}\r\n",
+        prompt = prompt,
+        style = MSGBOX_INFORMATION,
+        caption = super::format::vbscript_string("ccplan"),
     );
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let dir = notify_scripts_dir()?;
+    let path = dir.join(format!(
+        "notify-{}-{}.vbs",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    // UTF-16 LE with BOM: wscript handles Unicode VBScript files reliably.
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in script.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    std::fs::write(&path, bytes)
+        .map_err(|error| NotifyError::Operation(format!("write notify script failed: {error}")))?;
+
+    let output = std::process::Command::new("wscript.exe")
+        .args([
+            "//Nologo",
+            path.to_str().ok_or_else(|| {
+                NotifyError::Operation("notify script path is not valid UTF-8".to_owned())
+            })?,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|error| NotifyError::Operation(format!("PowerShell toast failed: {error}")))?;
-    command_success("PowerShell toast", &output)
+        .map_err(|error| NotifyError::Operation(format!("wscript notify failed: {error}")))?;
+    command_success("wscript notify", &output)
+}
+
+/// `%LOCALAPPDATA%\ccplan\data`, or `$CCPLAN_ROOT\data` under tests/custom roots.
+#[cfg(target_os = "windows")]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn notify_scripts_dir() -> Result<std::path::PathBuf, NotifyError> {
+    let dir = if let Some(root) = std::env::var_os("CCPLAN_ROOT") {
+        std::path::PathBuf::from(root).join("data")
+    } else {
+        let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+            NotifyError::Operation("LOCALAPPDATA is unset".to_owned())
+        })?;
+        std::path::PathBuf::from(local).join("ccplan").join("data")
+    };
+    std::fs::create_dir_all(&dir).map_err(|error| {
+        NotifyError::Operation(format!(
+            "create notify script dir {} failed: {error}",
+            dir.display()
+        ))
+    })?;
+    Ok(dir)
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]

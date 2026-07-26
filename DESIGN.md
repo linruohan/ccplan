@@ -142,7 +142,7 @@ on the next reconcile.
 > delivery. A per-platform conformance test MUST assert the exact identity grammar in the table above.
 
 **`Notifier`** — emit a desktop notification. Backends: Linux `libnotify`/`notify-send` (D-Bus);
-macOS `osascript`/`UserNotifications`; Windows toast (WinRT). There is no silent no-op notification
+macOS `osascript`/`UserNotifications`; Windows `wscript` MsgBox. There is no silent no-op notification
 mode: if the platform's notification capability is unavailable, `doctor` reports it and `apply`
 warns loudly (it does not fail planning), so a misconfigured notifier is always surfaced rather than
 hidden behind a fallback.
@@ -413,7 +413,7 @@ This is the highest-risk part of the design. Controls (defense in depth):
   | Date/time + tz/DST | `jiff` 0.2 (`serde`) | best-in-class IANA-zone + DST disambiguation; bundles tzdb on Windows |
   | OS dirs | `directories` 5 | XDG / macOS / Windows data·config·state dirs |
   | Hashing (`rev`, id) | `blake3` | short schedule-rev + id hashing |
-  | Notifications | `notify-rust` 4 | Linux D-Bus / macOS / Windows toast |
+  | Notifications | `notify-rust` 4 | Linux D-Bus / macOS / Windows wscript MsgBox |
   | File locking | `fs2` + temp-then-rename | atomic, locked writes (Inv-9) |
   | macOS plist | `plist` 1 | authors the LaunchAgent plist (maintained) |
 

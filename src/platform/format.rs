@@ -2,7 +2,7 @@
 //!
 //! Nothing here performs IO, so it is coverage-on and unit-tested in this file — even the helpers
 //! that only a single platform backend *uses* (the Windows XML escaper, the launchd calendar, the
-//! AppleScript/PowerShell quoters). Keeping the pure logic out of the cfg-gated, IO-heavy backend
+//! AppleScript/VBScript quoters). Keeping the pure logic out of the cfg-gated, IO-heavy backend
 //! files (`systemd.rs`, `schtasks.rs`, `launchd.rs`, `notify.rs`) is exactly what lets it be tested
 //! on any host, including the Linux coverage job where `schtasks.rs`/`launchd.rs` never compile.
 //!
@@ -140,10 +140,10 @@ pub(crate) fn applescript_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Quotes a string as a single-quoted `PowerShell` literal (used by the Windows notifier).
+/// Quotes a string as a VBScript string literal (used by the Windows notifier).
 #[cfg(any(target_os = "windows", test))]
-pub(crate) fn powershell_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+pub(crate) fn vbscript_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 #[cfg(test)]
@@ -238,6 +238,6 @@ HostName: PC
     #[test]
     fn notifier_string_quoters_escape_their_metacharacters() {
         assert_eq!(applescript_string("a\\b\"c"), "\"a\\\\b\\\"c\"");
-        assert_eq!(powershell_string("it's"), "'it''s'");
+        assert_eq!(vbscript_string("say \"hi\""), "\"say \"\"hi\"\"\"");
     }
 }

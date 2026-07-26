@@ -49,7 +49,7 @@ impl Scheduler for NativeScheduler {
     fn add(&self, trigger: &TriggerRecord) -> Result<(), SchedulerError> {
         let xml = task_xml(&self.binary, trigger)?;
         let path = temp_xml_path(&trigger.backend_id);
-        fs::write(&path, xml).map_err(io_error("write task XML"))?;
+        write_xml_utf8_bom(&path, &xml).map_err(io_error("write task XML"))?;
         let output = Command::new("schtasks.exe")
             .args([
                 "/Create",
@@ -120,9 +120,13 @@ fn task_xml(binary: &Path, trigger: &TriggerRecord) -> Result<String, SchedulerE
         .map(|arg| quote_windows_arg(arg))
         .collect::<Vec<_>>()
         .join(" ");
+    let working_dir = binary
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
 
     Ok(format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+            r#"<?xml version="1.0"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <TimeTrigger>
@@ -152,11 +156,13 @@ fn task_xml(binary: &Path, trigger: &TriggerRecord) -> Result<String, SchedulerE
     <Exec>
       <Command>{}</Command>
       <Arguments>{}</Arguments>
+      <WorkingDirectory>{}</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>"#,
         xml_escape(&binary.display().to_string()),
-        xml_escape(&arguments)
+        xml_escape(&arguments),
+        xml_escape(&working_dir)
     ))
 }
 
@@ -219,4 +225,14 @@ fn is_missing_task(output: &Output) -> bool {
         String::from_utf8_lossy(&output.stderr)
     );
     text.contains("cannot find") || text.contains("does not exist")
+}
+
+/// 以 UTF-8 带 BOM 编码写入 XML 文件。
+/// Windows 任务计划程序对编码很敏感，UTF-8 带 BOM 是最可靠的格式。
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn write_xml_utf8_bom(path: &Path, xml: &str) -> std::io::Result<()> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    bytes.extend_from_slice(xml.as_bytes());
+    fs::write(path, bytes)
 }

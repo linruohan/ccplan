@@ -37,21 +37,27 @@ impl Store {
 
     /// Creates a store rooted in the current user's platform-specific directories.
     ///
+    /// Organization is intentionally empty so Windows resolves to
+    /// `%APPDATA%\ccplan\…` rather than the duplicated `%APPDATA%\ccplan\ccplan\…`.
+    ///
     /// # Errors
     ///
     /// Returns an error when the OS/user directory provider cannot determine project directories.
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn for_user() -> Result<Self, StoreError> {
-        let dirs = ProjectDirs::from("io", "ccplan", "ccplan")
+        let dirs = ProjectDirs::from("io", "", "ccplan")
             .ok_or(StoreError::ProjectDirsUnavailable)?;
-        Ok(Self {
+        let store = Self {
             data: dirs.data_dir().to_path_buf(),
             config: dirs.config_dir().to_path_buf(),
             state: dirs
                 .state_dir()
                 .unwrap_or_else(|| dirs.data_dir())
                 .to_path_buf(),
-        })
+        };
+        #[cfg(windows)]
+        migrate_legacy_windows_project_dirs(&store)?;
+        Ok(store)
     }
 
     #[must_use]
@@ -473,6 +479,45 @@ impl Drop for StoreLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
     }
+}
+
+/// Moves `%APPDATA%\ccplan\ccplan\{data,config}` into `%APPDATA%\ccplan\{data,config}`
+/// when the new layout is empty. Older builds used `ProjectDirs::from("io", "ccplan", "ccplan")`.
+#[cfg(windows)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn migrate_legacy_windows_project_dirs(store: &Store) -> Result<(), StoreError> {
+    let Some(legacy) = ProjectDirs::from("io", "ccplan", "ccplan") else {
+        return Ok(());
+    };
+    migrate_dir_if_needed(legacy.data_dir(), &store.data)?;
+    migrate_dir_if_needed(legacy.config_dir(), &store.config)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn migrate_dir_if_needed(from: &Path, to: &Path) -> Result<(), StoreError> {
+    if !from.exists() || from == to {
+        return Ok(());
+    }
+    if to.exists() {
+        let is_empty = fs::read_dir(to)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false);
+        if !is_empty {
+            return Ok(());
+        }
+        let _ = fs::remove_dir(to);
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|source| io_error(parent.to_path_buf(), source))?;
+    }
+    fs::rename(from, to).map_err(|source| io_error(from.to_path_buf(), source))?;
+    // Drop the now-empty `%APPDATA%\ccplan\ccplan` parent when possible.
+    if let Some(parent) = from.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]

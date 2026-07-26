@@ -69,7 +69,7 @@ The first public release.
 - **Native scheduler integration**: `systemd --user` transient timers (Linux), LaunchAgent plists
   (macOS), and Task Scheduler XML tasks (Windows).  `apply` reconciles desired vs. live triggers
   idempotently; `fire` is guarded by a durable at-most-once ledger.
-- **Notifications**: `notify-rust` (Linux), `osascript` (macOS), PowerShell WinRT toast (Windows);
+- **Notifications**: `notify-rust` (Linux), `osascript` (macOS), `wscript` MsgBox (Windows);
   non-fatal; non-silent on missing capability.
 - **`run:` automation**: argv-only (no shell), allowlisted absolute paths, plan-file ownership
   check, configurable timeout, at-most-once via ledger, structured `fire.log` output.
